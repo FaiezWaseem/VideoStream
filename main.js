@@ -1,3 +1,12 @@
+function copy(text) {
+  var input = document.createElement('textarea');
+  input.innerHTML = text;
+  document.body.appendChild(input);
+  input.select();
+  var resultCopy = document.execCommand("copy");
+  document.body.removeChild(input);
+  return resultCopy;
+}
 //Create an account on Firebase, and use the credentials they give you in place of the following
 var firebaseConfig = {
     apiKey: "AIzaSyBhQKzVqS9XnwF68ormlnELFRrOoYJ83vw",
@@ -10,52 +19,162 @@ var firebaseConfig = {
     measurementId: "G-KP95XQ99M3"
   };
   firebase.initializeApp(firebaseConfig);
-  
-  var database = firebase.database().ref();
-  var yourVideo = document.getElementById("yourVideo");
-  var friendsVideo = document.getElementById("friendsVideo");
-  var yourId = Math.floor(Math.random()*1000000000);
-  //Create an account on Viagenie (http://numb.viagenie.ca/), and replace {'urls': 'turn:numb.viagenie.ca','credential': 'websitebeaver','username': 'websitebeaver@email.com'} with the information from your account
-  var servers = {'iceServers': [{'urls': 'stun:stun.services.mozilla.com'}, {'urls': 'stun:stun.l.google.com:19302'}, {'urls': 'turn:numb.viagenie.ca','credential': 'beaver','username': 'webrtc.websitebeaver@gmail.com'}]};
+  var firestore = firebase.firestore();
+
+const servers = {
+    iceServers: [
+      {
+        urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'],
+      },
+    ],
+    iceCandidatePoolSize: 10,
+  };
+
+  //Global State 
   var pc = new RTCPeerConnection(servers);
-  pc.onicecandidate = (event => event.candidate?sendMessage(yourId, JSON.stringify({'ice': event.candidate})):console.log("Sent All Ice") );
-  pc.onaddstream = (event => friendsVideo.srcObject = event.stream);
   
-  function sendMessage(senderId, data) {
-      var msg = database.push({ sender: senderId, message: data });
-      msg.remove();
-  }
+  let mystream = null;
+  let Otherstream = null;
+
+
+
+// HTML elements
+const webcamButton = document.getElementById('webcamButton');
+const webcamVideo = document.getElementById('webcamVideo');
+const callButton = document.getElementById('callButton');
+const callInput = document.getElementById('callInput');
+const answerButton = document.getElementById('answerButton');
+const remoteVideo = document.getElementById('remoteVideo');
+const hangupButton = document.getElementById('hangupButton');
+const copytext = document.getElementById('copytext');
+
+webcamButton.onclick =  async () =>{
+    // Accessing my video from camera
+    mystream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    // user other stream
+    Otherstream = new MediaStream();
+
+  // Pushing my video to peer connection  (pushing my video to server)
+  mystream.getTracks().forEach((track) => {
+    pc.addTrack(track, mystream);
+  });
+
+
+    // Pulling other video  from remote stream, add to video stream
+    pc.ontrack = (event) => {
+        event.streams[0].getTracks().forEach((track) => {
+            Otherstream.addTrack(track);
+        });
+}
+
+//Displaying my video 
+webcamVideo.srcObject = mystream;
+//Displaying Other video
+remoteVideo.srcObject = Otherstream;
+
+callButton.disabled = false;
+answerButton.disabled = false;
+webcamButton.disabled = true;
+webcamButton.style.display = "none"
+callButton.style.display = "block"
+callInput.style.display = "block"
+answerButton.style.display = "block"
+
+}
+
+// 2. Create an offer
+callButton.onclick = async () => {
+    // Reference Firestore collections for signaling
+    const callDoc = firestore.collection('calls').doc();
+    const offerCandidates = callDoc.collection('offerCandidates');
+    const answerCandidates = callDoc.collection('answerCandidates');
   
-  function readMessage(data) {
-      var msg = JSON.parse(data.val().message);
-      var sender = data.val().sender;
-      if (sender != yourId) {
-          if (msg.ice != undefined)
-              pc.addIceCandidate(new RTCIceCandidate(msg.ice));
-          else if (msg.sdp.type == "offer")
-              pc.setRemoteDescription(new RTCSessionDescription(msg.sdp))
-                .then(() => pc.createAnswer())
-                .then(answer => pc.setLocalDescription(answer))
-                .then(() => sendMessage(yourId, JSON.stringify({'sdp': pc.localDescription})));
-          else if (msg.sdp.type == "answer")
-              pc.setRemoteDescription(new RTCSessionDescription(msg.sdp));
+    callInput.value = callDoc.id;
+    copytext.style.display = "block"
+    
+  
+    // Get candidates for caller, save to db
+    pc.onicecandidate = (event) => {
+      event.candidate && offerCandidates.add(event.candidate.toJSON());
+    };
+  
+    // Create offer
+    const offerDescription = await pc.createOffer();
+    await pc.setLocalDescription(offerDescription);
+  
+    const offer = {
+      sdp: offerDescription.sdp,
+      type: offerDescription.type,
+    };
+  
+    await callDoc.set({ offer });
+  
+    // Listen for remote answer
+    callDoc.onSnapshot((snapshot) => {
+      const data = snapshot.data();
+      if (!pc.currentRemoteDescription && data?.answer) {
+        const answerDescription = new RTCSessionDescription(data.answer);
+        pc.setRemoteDescription(answerDescription);
       }
+    });
+  
+    // When answered, add candidate to peer connection
+    answerCandidates.onSnapshot((snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        if (change.type === 'added') {
+          const candidate = new RTCIceCandidate(change.doc.data());
+          pc.addIceCandidate(candidate);
+        }
+      });
+    });
+  
+    hangupButton.disabled = false;
+
+answerButton.style.display = "none"
   };
   
-  database.on('child_added', readMessage);
+  // 3. Answer the call with the unique ID
+  answerButton.onclick = async () => {
+    const callId = callInput.value;
+    const callDoc = firestore.collection('calls').doc(callId);
+    const answerCandidates = callDoc.collection('answerCandidates');
+    const offerCandidates = callDoc.collection('offerCandidates');
   
-  function showMyFace() {
-    navigator.mediaDevices.getUserMedia({audio:true, video:true})
-      .then(stream => yourVideo.srcObject = stream)
-      .then(stream => pc.addStream(stream));
+    pc.onicecandidate = (event) => {
+      event.candidate && answerCandidates.add(event.candidate.toJSON());
+    };
+  
+    const callData = (await callDoc.get()).data();
+  
+    const offerDescription = callData.offer;
+    await pc.setRemoteDescription(new RTCSessionDescription(offerDescription));
+  
+    const answerDescription = await pc.createAnswer();
+    await pc.setLocalDescription(answerDescription);
+  
+    const answer = {
+      type: answerDescription.type,
+      sdp: answerDescription.sdp,
+    };
+  
+    hangupButton.style.display = "block"
+    answerButton.style.display = "none"
+    callInput.style.display = "none"
+
+
+
+    await callDoc.update({ answer });
+    offerCandidates.onSnapshot((snapshot) => {
+      snapshot.docChanges().forEach((change) => {
+        console.log(change);
+        if (change.type === 'added') {
+          let data = change.doc.data();
+          pc.addIceCandidate(new RTCIceCandidate(data));
+        }
+      });
+    });
+  };
+  copytext.onclick = () =>{
+    copy(callInput.value)
+    alert('Code Copied')
   }
-  
-  function showFriendsFace() {
-    pc.createOffer()
-      .then(offer => pc.setLocalDescription(offer) )
-      .then(() => sendMessage(yourId, JSON.stringify({'sdp': pc.localDescription})) );
-  }
-  
-  
-  
-  Resources
