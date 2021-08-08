@@ -9,3 +9,43 @@ video {
     margin: 5px 0px 0px 10px !important;
     width: 654px;
   }
+  #yourVideo{
+    position: fixed;
+    width: 150px;
+    height: 150px; 
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background-color: rgba(0,0,0,0.5);
+    z-index: 2; 
+    cursor: pointer; 
+  }
+  #friendsVideo{
+      width: 100vw;
+      height: 80vh;
+  }
+  @media screen and (max-width : 768px) {
+      #yourVideo{
+        position: fixed;
+        width: 150px;
+        height: 150px; 
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background-color: rgba(0,0,0,0.5);
+        z-index: 2; 
+        cursor: pointer; 
+      }
+      #friendsVideo{
+          width: 100vw;
+          height: 90vh;
+      }
+      button{
+          width: 200px;
+      }
+      video{
+          margin: 0;
+      }
+  }
